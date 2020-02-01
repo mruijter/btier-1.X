@@ -178,9 +178,6 @@ static ssize_t tier_attr_discard_to_devices_store(struct tier_device *dev,
 {
 	if ('0' != buf[0] && '1' != buf[0])
 		return s;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-	return -EOPNOTSUPP;
-#endif
 	if ('0' == buf[0]) {
 		if (dev->discard_to_devices) {
 			dev->discard_to_devices = 0;
@@ -200,15 +197,15 @@ static ssize_t tier_attr_discard_store(struct tier_device *dev,
 {
 	if ('0' != buf[0] && '1' != buf[0])
 		return s;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-	return -EOPNOTSUPP;
-#endif
 	if ('0' == buf[0]) {
 		if (dev->discard) {
 			dev->discard = 0;
 			pr_info("discard is disabled\n");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,7,0)
 			queue_flag_clear_unlocked(QUEUE_FLAG_DISCARD,
+						  dev->rqueue);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
+			blk_queue_flag_clear(QUEUE_FLAG_DISCARD,
 						  dev->rqueue);
 #endif
 		}
@@ -216,8 +213,11 @@ static ssize_t tier_attr_discard_store(struct tier_device *dev,
 		if (!dev->discard) {
 			dev->discard = 1;
 			pr_info("discard is enabled\n");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,7,0)
 			queue_flag_set_unlocked(QUEUE_FLAG_DISCARD,
+						dev->rqueue);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
+			blk_queue_flag_set(QUEUE_FLAG_DISCARD,
 						dev->rqueue);
 #endif
 		}
@@ -418,9 +418,15 @@ static ssize_t tier_attr_migration_policy_store(struct tier_device *dev,
 		goto end_error;
 	}
 	memcpy(devicename, a, p - a);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)
 	if (0 !=
-	    strcmp(devicename,
-		   dev->backdev[devicenr]->fds->f_dentry->d_name.name)) {
+		strcmp(devicename,
+			dev->backdev[devicenr]->fds->f_dentry->d_name.name)) {
+#else
+	if (0 !=
+		strcmp(devicename,
+			dev->backdev[devicenr]->fds->f_path.dentry->d_name.name)) {
+#endif
 		kfree(devicename);
 		goto end_error;
 	}
@@ -557,9 +563,9 @@ static ssize_t tier_attr_uuid_show(struct tier_device *dev, char *buf)
 {
 	int res = 0;
 
-	memcpy(buf, dev->backdev[0]->devmagic->uuid, TIGER_HASH_LEN);
-	buf[TIGER_HASH_LEN] = '\n';
-	res = TIGER_HASH_LEN + 1;
+	memcpy(buf, dev->backdev[0]->devmagic->uuid, UUID_LEN);
+	buf[UUID_LEN] = '\n';
+	res = UUID_LEN + 1;
 	return res;
 }
 
@@ -649,6 +655,7 @@ static ssize_t tier_attr_migration_policy_show(struct tier_device *dev,
 
 	for (i = 0; i < dev->attached_devices; i++) {
 		if (!msg) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)
 			msg2 =
 			    as_sprintf
 			    ("%7s %20s %15s %15s\n%7u %20s %15u %15u\n", "tier",
@@ -657,7 +664,18 @@ static ssize_t tier_attr_migration_policy_show(struct tier_device *dev,
 			     dev->backdev[i]->devmagic->dtapolicy.max_age,
 			     dev->backdev[i]->devmagic->dtapolicy.
 			     hit_collecttime);
+#else
+			msg2 =
+			    as_sprintf
+			    ("%7s %20s %15s %15s\n%7u %20s %15u %15u\n", "tier",
+			     "device", "max_age", "hit_collecttime", i,
+			     dev->backdev[i]->fds->f_path.dentry->d_name.name,
+			     dev->backdev[i]->devmagic->dtapolicy.max_age,
+			     dev->backdev[i]->devmagic->dtapolicy.
+			     hit_collecttime);
+#endif
 		} else {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)
 			msg2 =
 			    as_sprintf("%s%7u %20s %15u %15u\n", msg,
 				       i,
@@ -667,6 +685,17 @@ static ssize_t tier_attr_migration_policy_show(struct tier_device *dev,
 				       max_age,
 				       dev->backdev[i]->devmagic->dtapolicy.
 				       hit_collecttime);
+#else
+			msg2 =
+			    as_sprintf("%s%7u %20s %15u %15u\n", msg,
+				       i,
+				       dev->backdev[i]->fds->f_path.dentry->
+				       d_name.name,
+				       dev->backdev[i]->devmagic->dtapolicy.
+				       max_age,
+				       dev->backdev[i]->devmagic->dtapolicy.
+				       hit_collecttime);
+#endif
 		}
 		kfree(msg);
 		msg = msg2;
@@ -731,6 +760,7 @@ static ssize_t tier_attr_device_usage_show(struct tier_device *dev, char *buf)
 		    btier_div(dev->backdev[i]->devmagic->total_reads, devblocks);
 		dev->backdev[i]->devmagic->average_writes =
 		    btier_div(dev->backdev[i]->devmagic->total_writes, devblocks);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)
 		line =
 		    as_sprintf
 		    ("%7u %20s %15lu %15llu %15u %15u %15llu %15llu\n", i,
@@ -739,6 +769,16 @@ static ssize_t tier_attr_device_usage_show(struct tier_device *dev, char *buf)
 		     dev->backdev[i]->devmagic->average_writes,
 		     dev->backdev[i]->devmagic->total_reads,
 		     dev->backdev[i]->devmagic->total_writes);
+#else
+		line =
+		    as_sprintf
+		    ("%7u %20s %15lu %15llu %15u %15u %15llu %15llu\n", i,
+		     dev->backdev[i]->fds->f_path.dentry->d_name.name, devblocks,
+		     allocated, dev->backdev[i]->devmagic->average_reads,
+		     dev->backdev[i]->devmagic->average_writes,
+		     dev->backdev[i]->devmagic->total_reads,
+		     dev->backdev[i]->devmagic->total_writes);
+#endif
 		lines[i + 1] = line;
 	}
 	msg = as_strarrcat(lines, i + 1);
